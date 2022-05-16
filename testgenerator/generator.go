@@ -13,10 +13,12 @@ import (
 
 type priceGenerator struct{}
 
+// New returns new test price generator which implements PriceStreamSubscriber-interface
 func New() fairprice.PriceStreamSubscriber {
 	return priceGenerator{}
 }
 
+// SubscribePriceStream implements PriceStreamSubscriber-interface
 func (g priceGenerator) SubscribePriceStream(ticker fairprice.Ticker) (chan fairprice.TickerPrice, chan error) {
 	chPrice, chErr := make(chan fairprice.TickerPrice), make(chan error)
 	go func() {
@@ -44,6 +46,7 @@ var randBasePrice atomic.Value
 
 func init() {
 	go func() {
+		// periodically update course data
 		for {
 			res, _ := http.Get("https://www.bitstamp.net/api/v2/ticker/btcusd")
 			data, _ := io.ReadAll(res.Body)

@@ -12,6 +12,11 @@ type Ticker string
 
 const (
 	BTCUSDTicker Ticker = "BTC_USD"
+
+	TickPeriod = 60 * time.Second
+
+	//
+	priceExpirePeriod = 2 * TickPeriod
 )
 
 type TickerPrice struct {
@@ -24,11 +29,6 @@ type PriceStreamSubscriber interface {
 	SubscribePriceStream(Ticker) (chan TickerPrice, chan error)
 }
 
-const (
-	timerPeriod    = 5 * time.Second
-	minPricePeriod = 2 * timerPeriod
-)
-
 type fairPrice struct {
 	sources []PriceStreamSubscriber
 }
@@ -39,6 +39,8 @@ type tickerData struct {
 	mx    sync.RWMutex //
 }
 
+// NewFairPrice uses upstream PriceStreamSubscriber-instances as data sources,
+// merges streams and returns PriceStreamSubscriber-instance.
 func NewFairPrice(sources ...PriceStreamSubscriber) PriceStreamSubscriber {
 	return &fairPrice{sources}
 }
@@ -55,8 +57,10 @@ func (f *fairPrice) SubscribePriceStream(ticker Ticker) (chan TickerPrice, chan 
 
 	chPrice, chErr := make(chan TickerPrice), make(chan error)
 	go func() {
-		time.Sleep(timerPeriod - time.Duration(time.Now().UnixNano())%timerPeriod)
-		timer := time.NewTicker(timerPeriod)
+		// align the time
+		time.Sleep(TickPeriod - time.Duration(time.Now().UnixNano())%TickPeriod)
+
+		timer := time.NewTicker(TickPeriod)
 		defer timer.Stop()
 		for range timer.C {
 			if price, err := calcFairPrice(data); err == nil {
@@ -76,17 +80,23 @@ func (f *fairPrice) SubscribePriceStream(ticker Ticker) (chan TickerPrice, chan 
 	return chPrice, chErr
 }
 
+// calcFairPrice calculates the fair price as a weighted average of the latest ticker data.
+// 		fairPrice = ∑(weight * price) / n
+//
+// The weight is defined as the time remaining before the price is deemed to be obsolete.
+// 		weight = 1-∆t/T
+//
 func calcFairPrice(data []*tickerData) (price string, err error) {
 	now := time.Now()
 	sum, sumWeight := 0.0, 0.0
 	for _, d := range data {
 		if tick, err := d.value(); err == nil {
 			if price, err := strconv.ParseFloat(tick.Price, 64); err == nil {
-				if dt := now.Sub(tick.Time); dt < minPricePeriod {
+				if dt := now.Sub(tick.Time); dt < priceExpirePeriod {
 
-					weight := 1 - float64(dt)/float64(minPricePeriod)
+					weight := 1 - float64(dt)/float64(priceExpirePeriod)
 					// todo: weight should be a function of Volume
-					// weight := fn(dt, tick.Volume)
+					// weight := ƒ(dt, tick.Volume)
 
 					sum += price * weight
 					sumWeight += weight
